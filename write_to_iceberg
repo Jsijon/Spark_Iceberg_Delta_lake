@@ -1,0 +1,64 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.types import *
+from pyspark.sql.functions import *
+from delta import *
+
+
+spark = SparkSession \
+    .builder \
+    .appName("word_counter") \
+    .config('spark.jars.packages','org.apache.iceberg:iceberg-spark-runtime-3.2_2.12:0.14.1') \
+    .config('spark.sql.extensions','org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions') \
+    .config('spark.sql.catalog.spark_catalog','org.apache.iceberg.spark.SparkSessionCatalog') \
+    .config('spark.sql.catalog.spark_catalog.type','hive') \
+    .config('spark.sql.catalog.local','org.apache.iceberg.spark.SparkCatalog') \
+    .config('spark.sql.catalog.local.type','hadoop') \
+    .config('spark.sql.catalog.local.warehouse','warehouse')  \
+    .getOrCreate()
+
+# spark = SparkSession \
+#     .builder \
+#     .appName("word_counter") \
+#     .config('spark.jars.packages','io.delta:delta-core_2.12:2.1.0')  \
+#     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+#     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+#     .getOrCreate() 
+
+
+       
+
+spark.sql('DROP TABLE local.db.table')
+spark.sql('CREATE TABLE local.db.table (unique_word string, count bigint) USING iceberg')    
+
+# spark.sql('DROP TABLE local.db.table')    
+
+inputPath = "./text.txt"
+schema1 = StructType([StructField('word', StringType(), True)])    
+
+print('step1')
+inputDF = spark.read.option("delimiter", "/t").schema(schema1).csv(inputPath)
+inputDF.show()
+
+print('step2')
+inputDF = inputDF.select(split(col("word")," ").alias("word"))
+inputDF.show()
+
+print('step3')
+inputDF = inputDF.select(inputDF.word,explode(inputDF.word)).withColumnRenamed("col","unique_word")
+inputDF.show()  
+
+print('step4')
+inputDF = inputDF.filter(inputDF["unique_word"] != "")
+inputDF.show()  
+
+print('step5')
+inputDF = inputDF.groupBy("unique_word").count()    
+inputDF.show()
+
+print('writing to iceberg')
+# inputDF.writeTo("local.db.table").create()
+inputDF.writeTo("local.db.table").append()
+
+
+DF_from_iceberg = spark.table("local.db.table")
+DF_from_iceberg.show()
